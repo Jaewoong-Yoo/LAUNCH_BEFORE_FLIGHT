@@ -1,0 +1,155 @@
+
+
+// essential header for ROS-OpenCV operation
+#include <ros/ros.h>
+
+// for using standard messages, float 32 type
+// communicate to image processing algorithm result
+#include <std_msgs/Float32MultiArray.h>
+
+// for using serial communication
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <arpa/inet.h>
+
+
+//#define debug
+
+// setup the initial name
+using namespace ros;
+using namespace std;
+
+
+#define DF_UDP_BUFFER_SIZE  3
+#define DF_UDP_PORTNUM      50000
+#define DF_UDP_SERVER_ADDR  "20.0.1.120"
+
+
+struct struct_t_UDP
+{
+    int    Socket;
+	struct sockaddr_in ServerAddr;
+
+    float  TXBuffer[DF_UDP_BUFFER_SIZE];
+    char   RXBuffer[DF_UDP_BUFFER_SIZE];
+};
+
+#pragma pack(1)
+struct TX_message_data
+{
+
+
+};
+#pragma pack()
+
+struct struct_t_UDP           StrUDP;
+struct sockaddr_in            MyAddr;
+struct TX_message_data        TX_buff;
+struct struct_t_MainFuncArgs  StrMainFuncArgs;
+
+// for publishing the kalman states
+std_msgs::Float32MultiArray msg_image;
+
+
+
+void callback_serial_comm(const std_msgs::Float32MultiArray& msg_data_input)
+{
+
+
+}
+
+
+
+// node main loop, for ROS
+int main(int argc, char** argv)
+{
+	// node name initialization
+	init(argc, argv, "vel_track");
+
+	// assign node handler
+	ros::NodeHandle nh_;
+
+	// for debugging
+	printf("Initiate: vel_track_node\n");
+
+
+	// subscribing the image processing results (x_pos, y_pos)
+    //Subscriber msg_image_input = nh_.subscribe("/flight_state", 1, callback_serial_comm);
+
+
+	// for publishing the kalman filter results
+	//Publisher pub_kalman_output = nh_.advertise<std_msgs::Float32MultiArray>("/hectorSLAM/kalman_output", 1);
+
+	// setup the loop speed, [Hz], synchronizing the hector slam loop
+	ros::Rate loop_rate(20);
+
+	float fdt = (float)(1/20);
+
+
+	// Socket Creation
+	StrUDP.Socket = socket(PF_INET, SOCK_DGRAM, 0);
+	if(StrUDP.Socket == -1)
+	{
+		printf("[ERROR] 'socket()'\n");
+		return -1;
+	}
+	else
+	{
+		printf("[DONE] UDP socket is created\n");
+	}
+
+
+
+	// UDP-IP Setting
+	memset(&StrUDP.ServerAddr, 0, sizeof(StrUDP.ServerAddr)); // Clear to 0
+	StrUDP.ServerAddr.sin_family      = PF_INET;
+	StrUDP.ServerAddr.sin_port        = htons(DF_UDP_PORTNUM); // PORT#
+	StrUDP.ServerAddr.sin_addr.s_addr = inet_addr(DF_UDP_SERVER_ADDR); // IP for Server (Normally PC IP)
+
+	memset(&MyAddr, 0, sizeof(MyAddr));
+	MyAddr.sin_family = PF_INET;
+	MyAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	MyAddr.sin_port = htons(DF_UDP_PORTNUM);
+
+	if(bind(StrUDP.Socket,(struct sockaddr *)&MyAddr, sizeof(MyAddr))!=0)
+	{
+		printf("bind() error!\n");
+        return -1;
+	}
+
+    char recvBuff;
+
+	int size_addr = sizeof(StrUDP.ServerAddr);
+    //printf("[DONE] UDP initialized! size : %d\n",size_addr);
+
+
+
+
+
+	// node loop, for ROS, check ros status, ros::ok()
+	while( ok() )
+	{
+
+        recvfrom(StrUDP.Socket,(char*)&recvBuff,sizeof(char), 0, (struct sockaddr *)(&StrUDP.ServerAddr), (socklen_t *)&size_addr);
+        sendto(StrUDP.Socket, (char*)&TX_buff, sizeof(TX_buff), 0, (struct sockaddr *)(&StrUDP.ServerAddr), sizeof(StrUDP.ServerAddr));
+
+
+		// loop rate [Hz]
+        loop_rate.sleep();
+
+
+		// loop sampling, ros
+		spinOnce();
+	}
+
+	// for debugging
+	printf("Terminate: FCC_Serial_node\n");
+    close(StrUDP.Socket);
+
+	return 0;
+}
+
+
+
+

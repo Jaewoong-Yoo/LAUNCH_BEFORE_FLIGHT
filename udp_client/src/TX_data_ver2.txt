@@ -1,0 +1,106 @@
+TX_data.sIDLMajorVersion = 1;
+TX_data.sIDLMinorVersion = 1;
+
+TX_data.sSource = 0b0000010;
+TX_data.fTime = 12115.1; //time of day in sec. 
+
+TX_data.cID[0]='A';
+TX_data.cID[1]='I';
+TX_data.cID[2]='R';
+TX_data.cID[3]='C';
+TX_data.cID[4]='R';
+TX_data.cID[5]='A';
+TX_data.cID[6]='F';
+TX_data.cID[7]='T';
+
+TX_data.cType[0]= 'L';
+TX_data.cType[1]= 'O';
+TX_data.cType[2]= 'W';
+TX_data.cType[3]= 'S';
+TX_data.cType[4]= 'P';
+TX_data.cType[5]= 'E';
+TX_data.cType[6]= 'E';
+TX_data.cType[7]= 'D';
+
+TX_data.sACcat = 0b00000000;
+
+TX_data.cLivery[0] = 'a';
+TX_data.cLivery[1] = 'a';
+TX_data.cLivery[2] = 'a';
+TX_data.cLivery[3] = 'a';
+TX_data.cLivery[4] = 'a';
+TX_data.cLivery[5] = 'a';
+TX_data.cLivery[6] = 'a';
+TX_data.cLivery[7] = 'a';
+
+TX_data.dLat        = 30.213425;
+TX_data.dLon        = 123.123231;
+TX_data.lAltWGS84   = 0;
+TX_data.lAltMSL     = 1000;
+TX_data.lAltAGL     = 1000;
+TX_data.fBRNG       = 0;
+TX_data.fRNG        = 0;
+TX_data.fELV        = 0;
+
+TX_data.fTHDG       = 0;
+TX_data.fPitch      = 0;
+TX_data.fRoll       = 0;
+TX_data.fTTRK       = 0;
+TX_data.fVV         = 0;
+TX_data.fGS         = 0;
+TX_data.fTAS        = 0;
+TX_data.fCR         = 0;
+
+TX_data.sGearPos    = 0;
+TX_data.sFlapPos    = 0;
+
+TX_data.sSquawk     = 0;
+TX_data.lModeSAddr  = 0;
+TX_data.sNACp       = 0;
+TX_data.sNIC        = 0;
+TX_data.sNIC        = 0;
+TX_data.sSIL        = 0b00000010;
+
+TX_data.sADSBstat   = 0;
+TX_data.sTCASstat   = 0;
+TX_data.sDISPmatrix = 0b000000000000;
+TX_data.sAGstatus   = 0;
+TX_data.sVertSense  = 0;
+TX_data.sQLbits     = 0b0000000000000000;
+TX_data.sLWbits     = 0b00000000;
+TX_data.fBRNGacc    = 0;
+TX_data.fRNGacc     = 0;
+TX_data.fELVacc     = 0;
+TX_data.fHDGacc     = 0;
+TX_data.fCRacc      = 0;
+
+TX_data.fTCASvertrate  = 0;
+TX_data.sTCASVadvisory = 0x000;
+
+TX_data.fTCAShdgmd     = 0;
+TX_data.sTCASHadvisory = 0x000;
+
+TX_data.sWP            = 0;
+TX_data.fWPlat[0]=0;
+TX_data.fWPlat[1]=0;
+TX_data.fWPlat[2]=0;
+TX_data.fWPlat[3]=0;
+
+TX_data.fWPlon[0]=0;
+TX_data.fWPlon[1]=0;
+TX_data.fWPlon[2]=0;
+TX_data.fWPlon[3]=0;
+
+TX_data.fWpalt[0]=0;
+TX_data.fWpalt[1]=0;
+TX_data.fWpalt[2]=0;
+TX_data.fWpalt[3]=0;
+
+TX_data.fWPspd[0]=0;
+TX_data.fWPspd[1]=0;
+TX_data.fWPspd[2]=0;
+TX_data.fWPspd[3]=0;
+
+TX_data.sFlags1=0b1111111111111111;
+TX_data.sFlags2=0b1111111111111111;
+TX_data.sFlags3=0b1111111111111111;

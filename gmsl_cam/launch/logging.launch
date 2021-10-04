@@ -1,0 +1,7 @@
+<launch>
+	<node pkg="ads_b_read" 	name="ads_b_read_node" 	type="ads_b_read_node"/>
+	<node pkg="mavros"	type="mavros_node"	name="mavros" />
+	<node pkg="ads_b_read"	type="parse_node"	name="parse_node" />	
+	<node pkg="ads_b_read"	type="mavros_log_node"	name="mavros_log_node" />
+	<node pkg="ads_b_read"  type="log_node"		name="log_node" />	
+</launch>

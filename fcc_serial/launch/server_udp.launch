@@ -1,0 +1,10 @@
+<launch>
+        <param name="udp_portnum_uav1" type="int" value="14550"/>
+        <param name="udp_portnum_uav2" type="int" value="14560"/>
+        <param name="udp_portnum_usv" type="int" value="14570"/>
+	<param name="udp_portnum_opv" type="int" value="14580"/>
+	<node pkg="fcc_serial" name="server_udp_node_uav1" type="server_udp_node_uav1"/>
+	<node pkg="fcc_serial" name="server_udp_node_uav2" type="server_udp_node_uav2"/>
+	<node pkg="fcc_serial" name="server_udp_node_usv" type="server_udp_node_usv"/>
+	<node pkg="fcc_serial" name="server_udp_node_opv" type="server_udp_node_opv"/>
+</launch>

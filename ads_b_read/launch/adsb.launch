@@ -1,0 +1,5 @@
+<launch>
+	<node pkg="ads_b_read" name="ads_b_read_node" type="ads_b_read_node"/>
+	<node pkg="ads_b_read" name="ownint_node" type="ownint_node"/>
+	<node pkg="ads_b_read" name="log_node" type="log_node"/>
+</launch>
