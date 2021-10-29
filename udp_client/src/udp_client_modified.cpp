@@ -11,6 +11,292 @@
 using namespace ros;
 using namespace std;
 
+int a = 0;
+int CAM_SELECTION = 3; // 0: Front, 1,3: Left, 2,4: Right
+
+double bag_own_lat;
+double bag_own_lon;
+double bag_own_alt;
+
+double bag_int_lat;
+double bag_int_lon;
+double bag_int_alt;
+float intr_bearing   = 0;
+float intr_est_range = 0; 
+
+float RefECEFX_m        = 0.0;
+float RefECEFY_m        = 0.0;
+float RefECEFZ_m        = 0.0;
+
+// for publishing the kalman states
+std_msgs::Float32MultiArray     receive_data;
+ads_b_read::Traffic_Report_Array TR_Data_Array;
+ads_b_read::Traffic_Report       OWNSHIP_DATA;
+ads_b_read::Traffic_Report       INTRUDER_DATA;
+
+///////
+
+#define eps           0.00000001
+#define PI            3.1415926535
+
+float   CAMERA_PARAM_U0 = 960.0;
+float   CAMERA_PARAM_V0 = 540.0;
+
+float   size_pre[2];
+float   img_pre[2];
+
+int     count_target = 0;
+int     count_init = 0;
+float   dist_pre     = 0.0;
+float   diag_pre     = 0.0;
+float   pos_pre[2];
+
+float   bearing_angle   = 0.0;
+float   ownship_heading = 0.0;
+float   ownship_local[2];
+float   camsel[2];
+float   vel_abs = 0.0;
+float   vel_dir = 0.0;
+float   vel_abs_lpf = 0.0;
+float   vel_dir_lpf = 0.0;
+float   vel_abs_pre = 50.0;
+float   vel_dir_pre = 0.0;
+
+// Kalman filter
+int stateSize   = 4;
+int measSize    = 2;
+int contrSize   = 0;
+
+int zerosize = 0;
+int fivesize = 5;
+unsigned int type = CV_32F;
+
+cv::KalmanFilter kf(stateSize, measSize, contrSize, type);
+cv::Mat state(stateSize, 1, type);  // [x,y,v_x,v_y]
+cv::Mat meas(measSize, 1, type);    // [z_x,z_y]
+
+void LatLontoECEF(float lat, float lon, float h, float *ECEFX_m, float *ECEFY_m, float *ECEFZ_m);
+
+struct struct_Tar_data
+{
+    float   pos[3];
+    float   poslpf[2];
+    float   posfil[2];
+    float   vel[3];
+    float   impos[2];
+    float   imposfil[2];
+    float   size[2];
+    float   sizefil[2];
+    float   dist;
+
+    float   psi_ref;
+    float   a_n;
+    float   del_sigma;
+
+    uint8_t flag_detect;
+};
+
+struct struct_Tar_data        tar_data;
+
+
+float satmax(float data, float max)
+{
+    float res;
+    if(fabs(data) > max)
+        res = (data + eps)/fabs(data + eps)*max;
+    else
+        res = data;
+    return res;
+}
+
+
+float satmin(float data, float min)
+{
+    float res;
+    if(fabs(data) < min)
+        res = (data + eps)/fabs(data + eps)*min;
+    else
+        res = data;
+    return res;
+}
+
+float LPF(float data, float data_pre, float freq)
+{
+    float res;
+    float K_LPF;
+    float delT = 0.05;
+
+    K_LPF = freq*2*PI*delT / (1 + freq*2*PI*delT);
+
+    res = (data - data_pre) * K_LPF + data_pre;
+
+    return res;
+}
+
+
+void KalmanFilter_Init(void)
+{
+
+   //========================== Kalman Filter variable =============================//
+    cv::setIdentity(kf.transitionMatrix);
+    cv::setIdentity(kf.processNoiseCov, cv::Scalar(0.001));
+    cv::setIdentity(kf.measurementNoiseCov, cv::Scalar(0.01));
+
+    kf.measurementMatrix = cv::Mat::zeros(measSize, stateSize, type);
+    kf.measurementMatrix.at<float>(0) = 1.0;
+    kf.measurementMatrix.at<float>(5) = 1.0;
+
+    kf.processNoiseCov.at<float>(10) = 0.001;
+    kf.processNoiseCov.at<float>(15) = 0.001;
+
+    kf.errorCovPre.at<float>(0) = 1.0; // px
+    kf.errorCovPre.at<float>(5) = 1.0; // px
+    kf.errorCovPre.at<float>(10) = 1.0;
+    kf.errorCovPre.at<float>(15) = 1.0;
+
+    state.at<float>(0) = tar_data.pos[0];
+    state.at<float>(1) = tar_data.pos[1];
+    state.at<float>(2) = 0.0;
+    state.at<float>(3) = 0.0;
+
+    kf.statePost = state;
+}
+
+
+void kalmanfilter(void)
+{
+    float dT = 0.05;
+
+    kf.transitionMatrix.at<float>(2) = dT;
+    kf.transitionMatrix.at<float>(7) = dT;
+
+    state = kf.predict();
+    //cout << "State post:" << endl << state << endl;
+
+    meas.at<float>(0) = tar_data.poslpf[0];
+    meas.at<float>(1) = tar_data.poslpf[1];
+
+    kf.correct(meas);
+
+    tar_data.posfil[0] = state.at<float>(0);
+    tar_data.posfil[1] = state.at<float>(1);
+    tar_data.vel[0] = state.at<float>(2);
+    tar_data.vel[1] = state.at<float>(3);
+}
+
+// ==========================================//
+
+
+void distance_filter(void)
+{
+
+    if (count_init < 40)
+    {
+        float diag = sqrt(tar_data.sizefil[0]*tar_data.sizefil[0] + tar_data.sizefil[1]*tar_data.sizefil[1]);
+        diag = satmax(satmin(diag, 10.0),50.0);
+        diag_pre = diag;
+
+            if (CAM_SELECTION==1){
+                //tar_data.dist = 107.42*pow(diag,-1.307);   // Fitting!!!
+                tar_data.dist = 36.996*pow(diag,-0.963);   // Fitting!!!
+            }
+            else if(CAM_SELECTION==2){
+                tar_data.dist = 16368.0*pow(diag,-2.758);   // Fitting!!!
+            }
+        dist_pre = 3000.0;
+        pos_pre[0] = tar_data.pos[0];
+        pos_pre[1] = tar_data.pos[1];
+        count_init = count_init + 1;
+        cout << "init_task" << endl;
+    }
+
+    float OwnECEFX_m        = 0.0;
+    float OwnECEFY_m        = 0.0;
+    float OwnECEFZ_m        = 0.0;
+    LatLontoECEF((double)OWNSHIP_DATA.lat/10000000.0, (double)OWNSHIP_DATA.lon/10000000.0, (double)OWNSHIP_DATA.altitude/1000.0, &OwnECEFX_m, &OwnECEFY_m, &OwnECEFZ_m);
+
+    if (tar_data.flag_detect == 1)
+    {
+        tar_data.imposfil[0] = tar_data.impos[0];
+        tar_data.imposfil[1] = tar_data.impos[1];
+        img_pre[0] = tar_data.impos[0];
+        img_pre[1] = tar_data.impos[1];
+
+        tar_data.sizefil[0] = tar_data.size[0];
+        tar_data.sizefil[1] = tar_data.size[1];
+        size_pre[0] = tar_data.size[0];
+        size_pre[1] = tar_data.size[1];
+        count_target = 0;
+    }
+    else
+    {
+        tar_data.imposfil[0] = img_pre[0];
+        tar_data.imposfil[1] = img_pre[1];
+        tar_data.sizefil[0]  = size_pre[0];
+        tar_data.sizefil[1]  = size_pre[1];
+    }
+
+    float diag = sqrt(tar_data.sizefil[0]*tar_data.sizefil[0] + tar_data.sizefil[1]*tar_data.sizefil[1]);
+
+    float diag_lpf = LPF(diag, diag_pre, 0.01);
+    diag_pre = diag_lpf;
+    diag = satmax(satmin(diag, 10.0),50.0);
+
+    ///////// For fitting
+    // tar_data.dist = 16368.0*pow(diag,-2.758);
+    tar_data.dist = 36.996*pow(diag,-0.963);   // Fitting!!!
+
+    if (CAM_SELECTION==1){
+        //tar_data.dist = 107.42*pow(diag,-1.307);   // Fitting!!!
+        tar_data.dist = 36.996*pow(diag,-0.963);   // Fitting!!!
+    }
+    else if(CAM_SELECTION==2){
+        tar_data.dist = 36.996*pow(diag,-0.963);   // Fitting!!!
+
+    }
+    else{   
+
+    }
+
+    tar_data.dist = satmax(satmin(tar_data.dist, 1.0), 4.0);
+
+    tar_data.dist = LPF(tar_data.dist, dist_pre, 0.06);
+    dist_pre = tar_data.dist;
+
+    float psi_img = intr_bearing*D2R;  //[rad]
+
+    ownship_heading = ((float)OWNSHIP_DATA.heading / 100.0)*D2R;
+
+    tar_data.pos[0] = (OwnECEFY_m + tar_data.dist*1000 * cos(psi_img + ownship_heading) - RefECEFY_m)/1000.0;
+    tar_data.pos[1] = (OwnECEFX_m + tar_data.dist*1000 * sin(psi_img + ownship_heading) - RefECEFX_m)/1000.0;
+
+    tar_data.poslpf[0] = LPF(tar_data.pos[0], pos_pre[0], 1.0);
+    tar_data.poslpf[1] = LPF(tar_data.pos[1], pos_pre[1], 1.0);
+
+    pos_pre[0] = tar_data.poslpf[0];
+    pos_pre[1] = tar_data.poslpf[1];
+
+    // intr_est_range = sqrt( tar_data.posfil[0]*tar_data.posfil[0] + tar_data.posfil[1]*tar_data.posfil[1]  )*1000.0/1852;
+    kalmanfilter();
+
+    vel_abs = sqrt(tar_data.vel[0]*tar_data.vel[0] + tar_data.vel[1]*tar_data.vel[1])*1000.0;
+    vel_dir = atan2(tar_data.vel[1], tar_data.vel[0]);
+
+    vel_abs_lpf = LPF(vel_abs, vel_abs_pre, 0.5);
+    vel_dir_lpf = LPF(vel_dir, vel_dir_pre, 0.5);
+
+    vel_abs_pre = vel_abs_lpf;
+    vel_dir_pre = vel_dir_lpf;
+
+    intr_est_range = tar_data.dist;
+    cout <<"HS " << vel_abs_lpf << ", " << vel_dir_lpf << endl;
+    cout <<"HS " << tar_data.poslpf[0] << ", " <<tar_data.poslpf[1] << endl;
+    cout <<"HS " << tar_data.posfil[0] << ", " <<tar_data.posfil[1] << ", " <<tar_data.vel[0] << ", " <<tar_data.vel[1]<< endl;
+}
+
+////////
+
+
 double UAV0_gposition[3];
 double UAV1_gposition[3];
 float UAV0_linear_acc_local[3];
@@ -23,6 +309,7 @@ float UAV1_orientation_Euler_local[3];
 float UAV1_anglular_velocity_local[3];
 uint  UDP_tx_data[18];
 char  callsign_print[100][9];
+float detection_result[5];
 
 struct struct_t_UDP           StrUDP;
 struct sockaddr_in            MyAddr;
@@ -32,22 +319,9 @@ struct struct_DATA            TX_data;
 struct struct_udp_test        TX_test;
 struct struct_udp             TX_struct;      
 
-// for publishing the kalman states
-std_msgs::Float32MultiArray     receive_data;
-ads_b_read::Traffic_Report_Array TR_Data_Array;
-ads_b_read::Traffic_Report       OWNSHIP_DATA;
-ads_b_read::Traffic_Report       INTRUDER_DATA;
-
-int a = 0;
-
-double bag_own_lat;
-double bag_own_lon;
-double bag_own_alt;
-
-double bag_int_lat;
-double bag_int_lon;
-double bag_int_alt;
-
+void LatLontoECEF(float lat, float lon, float h, float *ECEFX_m, float *ECEFY_m, float *ECEFZ_m);
+void camsel_Callback(const std_msgs::Float32MultiArray& array);
+void detectionCallback(const std_msgs::Float32MultiArray& array);
 void arrayCallback(const std_msgs::UInt32MultiArray& array);
 void UAV0_global_position(const sensor_msgs::NavSatFix::ConstPtr& msg);
 void UAV1_global_position(const sensor_msgs::NavSatFix::ConstPtr& msg);
@@ -77,11 +351,13 @@ int main(int argc, char** argv)
 	// for debugging
 	printf("Initiate: UDP Client\n");
 
-	//Publish
-	Publisher  P_UAV	= nh_.advertise<std_msgs::UInt32MultiArray>("/TX_udp", 100);			
+	// Publish
+	// Publisher  P_UAV	= nh_.advertise<std_msgs::UInt32MultiArray>("/TX_udp", 100);			
 
 	//Subscribe
-	ros::Subscriber sub0 = nh_.subscribe("/TX_udp",100,arrayCallback);
+	// ros::Subscriber sub0 = nh_.subscribe("/TX_udp",100,arrayCallback);
+    ros::Subscriber sub0 = nh_.subscribe("/detection",1,detectionCallback);
+    ros::Subscriber sub00 = nh_.subscribe("/cam_select",1,camsel_Callback);
 	ros::Subscriber sub1 = nh_.subscribe("/uav0/mavros/global_position/global", 1, UAV0_global_position);
     ros::Subscriber sub2 = nh_.subscribe("/uav1/mavros/global_position/global", 1, UAV1_global_position);
     ros::Subscriber sub3 = nh_.subscribe<sensor_msgs::Imu>("/uav0/mavros/imu/data",1000,UAV0_imu_callback);
@@ -134,8 +410,19 @@ int main(int argc, char** argv)
     }
     double first_begine = ros::Time::now().toSec();
     double process_time;
+
+
+    LatLontoECEF(std_lat, std_lon, 10000.0, &RefECEFX_m, &RefECEFY_m, &RefECEFZ_m);
+
+
+
+    // HS KM
+    KalmanFilter_Init();
+
     // ros::Rate loop_rate(20);
 	while( ok() ){
+        distance_filter();
+
         // Time check
         double begine = ros::Time::now().toSec();
         process_time = begine -first_begine ;
@@ -188,7 +475,7 @@ int main(int argc, char** argv)
         label367[21] = 0;       // Pad                                  0
         label367[22] = 0;       // Pad                                  0
         label367[23] = 1;       // All Traffic / Treat Traffic
-  
+
         label367[24] = 0;       // ISO #5 Character STX(0/2) (LSB)      0
         label367[25] = 0;       // ISO #5 Character STX(0/2)            1
         label367[26] = 0;       // ISO #5 Character STX(0/2)            0
@@ -202,6 +489,7 @@ int main(int argc, char** argv)
         uint label_temp=0b0;
         PACKET(label367, label_temp);
         TX_struct.Label367 = htonl(label_temp);
+        
 
         ///// TX_struct.Label366_DTIF_Header /////
         int DTIF_header[32];
@@ -1144,7 +1432,14 @@ int main(int argc, char** argv)
         PACKET(data_0007_1, Data_0007_1_tempt);
         // TX_struct.TYPE_0007_1 = htonl(Data_0007_1_tempt);
 
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////INTRUDER INFORMATION/////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef INTRUDER_ON
 ///// TX_struct.INTR_DTIF_Packet_Header ///// ATTACHMENT 20G
         //0b 1111 0110 1000 0001 0000 0111 1010 0000
@@ -1179,9 +1474,9 @@ int main(int argc, char** argv)
 
         INTR_DTIF_Packet_header[31] = 0;         // Display Matrix
         INTR_DTIF_Packet_header[30] = 0;         // Display Matrix
-        INTR_DTIF_Packet_header[29] = 0;         // Source Data Type
+        INTR_DTIF_Packet_header[29] = 1;         // Source Data Type
         INTR_DTIF_Packet_header[28] = 1;         // Source Data Type
-        INTR_DTIF_Packet_header[27] = 0;         // Source Data Type
+        INTR_DTIF_Packet_header[27] = 1;         // Source Data Type
         INTR_DTIF_Packet_header[26] = 0;         // Air/Ground Status
         INTR_DTIF_Packet_header[25] = 0;         // Spare
         INTR_DTIF_Packet_header[24] = 0;         // Parity                               (odd)
@@ -1366,6 +1661,57 @@ int main(int argc, char** argv)
         INTR_data_0001[26] = 1;         // Relative Alititude status
         INTR_data_0001[25] = 0;         // Data Type Continuation Bit              
         INTR_data_0001[24] = 0;         // Parity                                  (odd)
+
+
+
+////////////////////////////////////////////////////////////////
+/// Range test
+
+        float intr_range = intr_est_range ;
+        
+
+        if (intr_range > 16.0){
+            INTR_data_0001[ 9] = 1;         // Coarse/Fine Range
+            if(intr_range > 8           ){ intr_range = intr_range - 8;         INTR_data_0001[28] = 1;};
+            if(intr_range > 4           ){ intr_range = intr_range - 4;         INTR_data_0001[29] = 1;};
+            if(intr_range > 2           ){ intr_range = intr_range - 2;         INTR_data_0001[30] = 1;};
+            if(intr_range > 1           ){ intr_range = intr_range - 1;         INTR_data_0001[31] = 1;};
+            if(intr_range > 0.5         ){ intr_range = intr_range - 0.5;       INTR_data_0001[16] = 1;};
+            if(intr_range > 0.25        ){ intr_range = intr_range - 0.25;      INTR_data_0001[17] = 1;};
+            if(intr_range > 0.125       ){ intr_range = intr_range - 0.125;     INTR_data_0001[18] = 1;};
+            if(intr_range > 0.0625      ){ intr_range = intr_range - 0.0625;    INTR_data_0001[19] = 1;};
+            if(intr_range > 0.03125     ){ intr_range = intr_range - 0.03125;   INTR_data_0001[20] = 1;};
+            if(intr_range > 0.015625    ){ intr_range = intr_range - 0.015625;  INTR_data_0001[21] = 1;};
+            if(intr_range > 0.0078125   ){ intr_range = intr_range - 0.0078125; INTR_data_0001[22] = 1;};
+            if(intr_range > 0.00390625  ){ intr_range = intr_range - 0.00390625;INTR_data_0001[23] = 1;};
+            if(intr_range > 0.00195313  ){ intr_range = intr_range - 0.00195313;INTR_data_0001[ 8] = 1;};
+      
+            INTR_data_0001[27] = 1;         // Traffic Range Invalidity    
+        }
+        else{
+            INTR_data_0001[ 9] = 0;         // Coarse/Fine Range
+            if(intr_range > 256         ){ intr_range = intr_range - 256;   INTR_data_0001[28] = 1;}; 
+            if(intr_range > 128         ){ intr_range = intr_range - 128;   INTR_data_0001[29] = 1;};
+            if(intr_range > 64          ){ intr_range = intr_range - 64;    INTR_data_0001[30] = 1;};
+            if(intr_range > 32          ){ intr_range = intr_range - 32;    INTR_data_0001[31] = 1;};
+            if(intr_range > 16          ){ intr_range = intr_range - 16;    INTR_data_0001[16] = 1;};
+            if(intr_range > 8           ){ intr_range = intr_range - 8;     INTR_data_0001[17] = 1;};
+            if(intr_range > 4           ){ intr_range = intr_range - 4;     INTR_data_0001[18] = 1;};
+            if(intr_range > 2           ){ intr_range = intr_range - 2;     INTR_data_0001[19] = 1;};
+            if(intr_range > 1           ){ intr_range = intr_range - 1;     INTR_data_0001[20] = 1;};
+            if(intr_range > 0.5         ){ intr_range = intr_range - 0.5;   INTR_data_0001[21] = 1;};
+            if(intr_range > 0.25        ){ intr_range = intr_range - 0.25;  INTR_data_0001[22] = 1;};
+            if(intr_range > 0.125       ){ intr_range = intr_range - 0.125; INTR_data_0001[23] = 1;};
+            if(intr_range > 0.0625      ){ intr_range = intr_range - 0.0625;INTR_data_0001[ 8] = 1;};
+          
+            INTR_data_0001[27] = 1;         // Traffic Range Invalidity    
+        }
+
+
+
+///
+/////////////////////////////////////////////////////////////////
+
         check_odd (INTR_data_0001, INTR_data_0001[24]);
 
         uint INTR_Data_0001_tempt=0b0;
@@ -1410,6 +1756,75 @@ int main(int argc, char** argv)
         INTR_data_0001_1[26] = 0;         // Bearing status
         INTR_data_0001_1[25] = 1;         // Data Type COntinuation Bit              
         INTR_data_0001_1[24] = 0;         // Parity                                  (odd)
+
+////////////////////////////////////////////////////////////////
+// Bearing test
+        // intr_bearing = -30.0; ///
+        // ANG_SIDECAM45 = 45deg, ANG_SIDECAM90 = 90deg //
+
+        float detect_x = detection_result[3] + 0.5*detection_result[1];
+        intr_bearing = (detect_x/(0.5*CAMwidth)) *(0.5*CAMFOV);//(0.5*CAMwidth - abs(detect_x) )/ (0.5*CAMFOV);
+
+        if (CAM_SELECTION==1){      // Left 45 View
+            intr_bearing = -ANG_SIDECAM45 + intr_bearing;
+            cout << "CAM_LEFT_45" << endl;
+        }
+        else if(CAM_SELECTION==2){  // Right 45 View
+            intr_bearing = ANG_SIDECAM45 + intr_bearing;
+            cout << "CAM_RIGHT_45" << endl;
+        }
+        else if(CAM_SELECTION==3){  // Left 90 View
+            intr_bearing = -ANG_SIDECAM90 + intr_bearing;
+            cout << "CAM_LEFT_90" << endl;
+        }
+        else if(CAM_SELECTION==4){  // Right 90 View
+            intr_bearing = ANG_SIDECAM90 + intr_bearing;
+            cout << "CAM_RIGHT_90" << endl;
+        }
+        else{                       // Front View
+            cout << "CAM_FRONT" << endl;
+        }
+        
+        cout << " detect_bearing : " << intr_bearing << endl;
+
+        if (intr_bearing >= 0){
+            INTR_data_0001_1[27] = 0;         // Bearing status
+
+            if(intr_bearing > 90)           { intr_bearing = intr_bearing - 90;         INTR_data_0001_1[28] = 1;}
+            if(intr_bearing > 45)           { intr_bearing = intr_bearing - 45;         INTR_data_0001_1[29] = 1;}
+            if(intr_bearing > 22.5)         { intr_bearing = intr_bearing - 22.5;       INTR_data_0001_1[30] = 1;}
+            if(intr_bearing > 11.25)        { intr_bearing = intr_bearing - 11.25;      INTR_data_0001_1[31] = 1;}
+            if(intr_bearing > 5.625)        { intr_bearing = intr_bearing - 5.625;      INTR_data_0001_1[16] = 1;}
+            if(intr_bearing > 2.8125)       { intr_bearing = intr_bearing - 2.8125;     INTR_data_0001_1[17] = 1;}
+            if(intr_bearing > 1.40625)      { intr_bearing = intr_bearing - 1.40625;    INTR_data_0001_1[18] = 1;}
+            if(intr_bearing > 0.703125)     { intr_bearing = intr_bearing - 0.703125;   INTR_data_0001_1[19] = 1;}
+            if(intr_bearing > 0.351563)     { intr_bearing = intr_bearing - 0.351563;   INTR_data_0001_1[20] = 1;}
+            if(intr_bearing > 0.175781)     { intr_bearing = intr_bearing - 0.175781;   INTR_data_0001_1[21] = 1;}
+            }
+        else{
+            
+            float intr_bearing_abs  = abs(intr_bearing);
+            intr_bearing            = 180.0 - intr_bearing_abs;
+
+            INTR_data_0001_1[27] = 1;         // Bearing status
+            
+            if(intr_bearing > 90)           { intr_bearing = intr_bearing - 90;         INTR_data_0001_1[28] = 1;}
+            if(intr_bearing > 45)           { intr_bearing = intr_bearing - 45;         INTR_data_0001_1[29] = 1;}
+            if(intr_bearing > 22.5)         { intr_bearing = intr_bearing - 22.5;       INTR_data_0001_1[30] = 1;}
+            if(intr_bearing > 11.25)        { intr_bearing = intr_bearing - 11.25;      INTR_data_0001_1[31] = 1;}
+            if(intr_bearing > 5.625)        { intr_bearing = intr_bearing - 5.625;      INTR_data_0001_1[16] = 1;}
+            if(intr_bearing > 2.8125)       { intr_bearing = intr_bearing - 2.8125;     INTR_data_0001_1[17] = 1;}
+            if(intr_bearing > 1.40625)      { intr_bearing = intr_bearing - 1.40625;    INTR_data_0001_1[18] = 1;}
+            if(intr_bearing > 0.703125)     { intr_bearing = intr_bearing - 0.703125;   INTR_data_0001_1[19] = 1;}
+            if(intr_bearing > 0.351563)     { intr_bearing = intr_bearing - 0.351563;   INTR_data_0001_1[20] = 1;}
+            if(intr_bearing > 0.175781)     { intr_bearing = intr_bearing - 0.175781;   INTR_data_0001_1[21] = 1;}
+        }
+
+        INTR_data_0001_1[26] = 1;         // Bearing status
+        
+
+////////////////////////////////////////////////////////////////
+
 
         // double own_alt = (double)bag_own_alt *m2ft;
         double intr_alt = 0;
@@ -1635,7 +2050,6 @@ int main(int argc, char** argv)
 
 
         /////Longitude
-        
         // LATITUDE
         if(intr_lon > 90.0)              { intr_lon = intr_lon - 90.0;         INTR_data_0002_2[ 8] = 1;    }
         if(intr_lon > 45.0)              { intr_lon = intr_lon - 45.0;         INTR_data_0002_2[ 9] = 1;    }
@@ -1679,17 +2093,17 @@ int main(int argc, char** argv)
         check_odd(INTR_data_0002, INTR_data_0002[24]);
         uint INTR_Data_0002_tempt=0b0;
         PACKET(INTR_data_0002, INTR_Data_0002_tempt);
-        TX_struct.INTR_TYPE_0002_0 = htonl(INTR_Data_0002_tempt);
+        // TX_struct.INTR_TYPE_0002_0 = htonl(INTR_Data_0002_tempt);
 
         check_odd(INTR_data_0002_1, INTR_data_0002_1[24]);
         uint INTR_Data_0002_1_tempt=0b0;
         PACKET(INTR_data_0002_1, INTR_Data_0002_1_tempt);
-        TX_struct.INTR_TYPE_0002_1 = htonl(INTR_Data_0002_1_tempt);
+        // TX_struct.INTR_TYPE_0002_1 = htonl(INTR_Data_0002_1_tempt);
 
         check_odd(INTR_data_0002_2, INTR_data_0002_2[24]);
         uint INTR_Data_0002_2_tempt=0b0;
         PACKET(INTR_data_0002_2, INTR_Data_0002_2_tempt);
-        TX_struct.INTR_TYPE_0002_2 = htonl(INTR_Data_0002_2_tempt);
+        // TX_struct.INTR_TYPE_0002_2 = htonl(INTR_Data_0002_2_tempt);
 
 
 /// TX_struct.INTR_TYPE_0003 ///// ATTACHMENT 20L  -----------------------------------From here, modify 
@@ -1734,6 +2148,8 @@ int main(int argc, char** argv)
         float int_hor_vel = (float)INTRUDER_DATA.hor_velocity /100.0 * mps2knot; //[knot]
         // cout << "int_hor_vel : " << int_hor_vel << " knot , " << (float)INTRUDER_DATA.hor_velocity /100.0 << " m/s"<<endl;
 
+        // Filtered Vision-based estimated velocity
+        int_hor_vel = vel_abs_lpf;
 
         if(int_hor_vel > 2048)     { int_hor_vel = int_hor_vel - 2048;       INTR_data_0003[29] = 1;}
         if(int_hor_vel > 1024)     { int_hor_vel = int_hor_vel - 1024;       INTR_data_0003[30] = 1;}
@@ -1796,10 +2212,16 @@ int main(int argc, char** argv)
         // INTRUDER_DATA.heading
         float intr_heading = (float)INTRUDER_DATA.heading / 100.0 ; 
 
+        // Filtered EO-based estimated heading
+        intr_heading = vel_dir_lpf*R2D;
+        if (vel_dir_lpf<0){
+            intr_heading = 360.0 - vel_dir_lpf*R2D;
+        }
+
         if (intr_heading > 180.0){
             // intr_heading = 360.0 - intr_heading;
             intr_heading = intr_heading -180.0;
-        INTR_data_0003_1[8] = 1; // 1; 
+            INTR_data_0003_1[8] = 1; // 1; 
             if (intr_heading>90.0)   { intr_heading = intr_heading - 90.0;     INTR_data_0003_1[ 9] = 1; }
             if (intr_heading>45.0)   { intr_heading = intr_heading - 45.0;     INTR_data_0003_1[10] = 1; }
             if (intr_heading>22.5)   { intr_heading = intr_heading - 22.5;     INTR_data_0003_1[11] = 1; }
@@ -2209,6 +2631,41 @@ static void QuaterniontoEuler(float orientation_x,float orientation_y,float orie
     yaw         = std::atan2(t3,t4) * R2D;
 }
 
+void detectionCallback(const std_msgs::Float32MultiArray& array)
+{
+    detection_result[0] = array.data[0]; // flag
+    detection_result[1] = array.data[1]; // size [width]
+    detection_result[2] = array.data[2]; // size y [height]
+    detection_result[3] = array.data[3]; // x from center
+    detection_result[4] = array.data[4]; // y from center
+
+    tar_data.flag_detect = detection_result[0];
+    tar_data.size[0] = detection_result[1];
+    tar_data.size[1] = detection_result[2];
+    tar_data.impos[0] = detection_result[3];
+    tar_data.impos[1] = detection_result[4];
+}
+
+
+void camsel_Callback(const std_msgs::Float32MultiArray& array)
+{
+    camsel[0] = array.data[0]; 
+    camsel[1] = array.data[1]; 
+
+    // CAM_SELECTION --> 0: Front, 1,3: Left, 2,4: Right
+    if (camsel[0]==1){ // [1, x]
+        CAM_SELECTION = 1;
+    }
+    else if (camsel[0]==2 || camsel[0]==3){ // [2, x], [3, x]
+        CAM_SELECTION = 0;
+    }
+    else if (camsel[0]==4){ // [4, x]
+        CAM_SELECTION = 2;
+    }
+    else{ // [x, x]
+        CAM_SELECTION = 0;
+    }
+}
 
 void arrayCallback(const std_msgs::UInt32MultiArray& array)
 {
@@ -2471,4 +2928,16 @@ void rawfixcallback_Int(const sensor_msgs::NavSatFix::ConstPtr& msg)
     bag_int_alt = msg ->altitude;
     // cout << "alt_int : " << bag_int_alt;
     // cout << "Intr lat : " << bag_int_lat << endl;
+}
+
+void LatLontoECEF(float lat, float lon, float h, float *ECEFX_m, float *ECEFY_m, float *ECEFZ_m){
+    float sinLat        = sin(lat/180.0*M_PI);
+    float sinLon        = sin(lon/180.0*M_PI);
+    float cosLat        = cos(lat/180.0*M_PI);
+    float cosLon        = cos(lon/180.0*M_PI);
+
+    float N             = WGS84_a_m/sqrt(1-WGS84_e*WGS84_e*sinLat*sinLat);
+    *ECEFX_m            = (N+h)*cosLat*cosLon;
+    *ECEFY_m            = (N+h)*cosLat*sinLon;
+    *ECEFZ_m            = (N*(1-WGS84_e*WGS84_e)+h)*sinLat;
 }
