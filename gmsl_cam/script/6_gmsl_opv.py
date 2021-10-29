@@ -20,7 +20,7 @@ from cv_bridge import CvBridge, CvBridgeError
 #For ROS Subscribe
 from sensor_msgs.msg import Imu
 
-file_number = 6
+file_number = 5
 desktop_name = 'usrg'
 
 class Detection:
@@ -29,13 +29,14 @@ class Detection:
         self.save_img        = 0        # 0 : Don't save, 1: Save
         self.imu_sinc        = 13       # IMU time sinc
 
-        # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_32490400-video-index0"  # right 0 / 5 (board pose)
-        # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_1A480200-video-index0"  # left 45 / 4 (board pose)
-        self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_1A080800-video-index0"  # right 90 / 6 (board pose)
+        # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_114F0B00-video-index0"  # left 90 / cam1 (board pose)
+        # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_1A480200-video-index0"  # left 45 / cam2 (board pose)
+        # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_14480200-video-index0"  # left 0 / cam3 (board pose)
 
-        # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_114F0B00-video-index0"  # left 90 / 2 (board pose)
-        # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_14480200-video-index0"  # left 0 / 1 (board pose)
-        # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_2B460000-video-index0"  # right 45 / 3 (board pose)
+        # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_1A080800-video-index0"  # right 0 / cam4 (board pose)
+        # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_32490400-video-index0"  # right 45 / cam5 (board pose)
+        self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_2B460000-video-index0"  # right 90 / cam6 (board pose)
+
         # self.cam0_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_23490400-video-index0" #left
         # self.cam1_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_28070800-video-index0" #front
         # self.cam2_addr = "/dev/v4l/by-id/usb-e-con_systems_NileCAM30_USB_24490400-video-index0" #right
